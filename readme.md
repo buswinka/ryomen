@@ -1,39 +1,27 @@
 # Ryomen
 ## For slicing up large microscopy images
 
-Ryomen is a lightweight, no dependancy utility for working with large biological microscopy images. 
+Ryomen is a lightweight, no dependency utility for working with large biological microscopy images. 
 
 ### Why do we need this?
 
 Modern microscopes can image cells, tissue, or whatever else, over huge spatial areas, resulting in images that can be
 quite large (hundreds of gigabytes). This can make applying image processing or deep learning algorithms difficult. 
-Ryomen makes this easy by automatically slicing up large images and providing an easy to use interface for working with the
+Ryomen makes this easy by automatically slicing up large images and providing an easy-to-use interface for working with the
 crops. 
 
 ### What can it do? 
 
 Ryomen works with N dimensional, arbitrary array types, including numpy, zarr, pytorch, or anything else. It simplifies
 the process of slicing large images, with slices that may overlap, applying a function to the image, and extracting the
-non-overlaping subregions. A simple use case might look like this
+non-overlaping subregions. The following example crops a large ```image``` into 512x512 crops overlapping by 64px, applying a hard to run
+function ```expensive_fn``` and taking the result and putting it into an ```output``` array. 
+
 
 ```python
-import skimage.io as io
-import zarr
-from ryomen import Slicer
-
-image = io.imread("really_huge_3d_images.tif")  # Shape of [3, 10000, 10000, 500] 
-c, x, y, z = image.shape
-output: zarr.Array = zarr.open(
-    'really_huge_output_on_disk.zarr',
-    mode="w",
-    shape=(c, x, y, z),
-    dtype="|f2",
-)
-crop_size = (512, 512, 64)
-overlap = (64, 64, 8)
-slices = Slicer(image, crop_size=crop_size, overlap=overlap)
-
-expensive_fn = lambda x: x + 1  # might be a ML model, or anything else
+crop_size = (512, 512)
+overlap = (64, 64)
+slices = ryomen.Slicer(image, crop_size=crop_size, overlap=overlap)
 
 for crop, source, destination in slices:
     # Run the expensive fn on a crop of the whole image
@@ -43,8 +31,39 @@ for crop, source, destination in slices:
     output[destination] = crop[source]  
 ```
 
+A full code example might look like this:
+
+```python
+import skimage.io as io
+import numpy as np
+import zarr
+from ryomen import Slicer
+
+image = io.imread("really_huge_8bit_3d_image.tif")  # Shape of [3, 10000, 10000] 
+c, x, y, z = image.shape
+output: zarr.Array = zarr.open(
+    'really_huge_output_on_disk.zarr',
+    mode="w",
+    shape=(c, x, y, z),
+    dtype="|f2",
+)
+
+expensive_fn = lambda x: x + 1  # might be a ML model, or anything else
+
+crop_size = (512, 512)
+overlap = (64, 64)
+slices = Slicer(image, crop_size=crop_size, overlap=overlap)
+for crop, source, destination in slices:
+    # Run the expensive fn on a crop of the whole image
+    crop = expensive_fn(crop)
+    
+    # Slot the crop into an output array, excluding the overlap
+    output[destination] = crop[source]  
+
+```
+
 You can apply arbitrary functions to a crop after it has been extracted from the large image. This is useful for working 
-with a large uint8 image that might need to be a flow for ML purposes. 
+with a large uint8 image that might need to be a cast to float for a ML model. 
 
 ```python
 import skimage.io as io
@@ -79,7 +98,6 @@ for crop, source, destination in slices:
     # Slot the crop into an output array, excluding the overlap
     output[destination] = crop[source]  
 ```
-
 
 Finally, ryomen can automatically batch tiles if you wanted to run each through a ML model. By default, a list of
 tensors will be returned, however, you may suply a custom collate fn to handle batched inputs. 
@@ -127,3 +145,5 @@ for crop, source, destination in slices:
     for b, (_source, _destination) in enumerate(zip(source, destination)):
         output[_destination] = crop[b, ...][_source]  
 ```
+
+Ryomen is names after the first name of the main antagonist of JJK who slices up everything.
