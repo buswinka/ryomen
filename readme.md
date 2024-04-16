@@ -14,8 +14,8 @@ crops.
 
 Ryomen works with N dimensional, arbitrary array types, including numpy, zarr, pytorch, or anything else. It simplifies
 the process of slicing large images, with slices that may overlap, applying a function to the image, and extracting the
-non-overlaping subregions. The following example crops a large ```image``` into 512x512 crops overlapping by 64px, applying a hard to run
-function ```expensive_fn``` and taking the result and putting it into an ```output``` array. 
+non-overlaping subregions. The following example crops a large ```image``` into 512x512 crops overlapping by 64px, aplies a hard to run
+function ```expensive_fn```, and takes the result and puts it into a pre-allocated ```output``` array. 
 
 
 ```python
