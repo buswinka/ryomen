@@ -63,7 +63,7 @@ for crop, source, destination in slices:
 ```
 
 You can apply arbitrary functions to a crop after it has been extracted from the large image. This is useful for working 
-with a large uint8 image that might need to be a cast to float for a ML model. 
+with a large uint8 image that might need to be cast to float for a ML model. 
 
 ```python
 import skimage.io as io
