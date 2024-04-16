@@ -39,12 +39,12 @@ import numpy as np
 import zarr
 from ryomen import Slicer
 
-image = io.imread("really_huge_8bit_3d_image.tif")  # Shape of [3, 10000, 10000] 
-c, x, y, z = image.shape
+image = io.imread("really_huge_8bit_2d_image.tif")  # Shape of [3, 10000, 10000] 
+c, x, y = image.shape
 output: zarr.Array = zarr.open(
     'really_huge_output_on_disk.zarr',
     mode="w",
-    shape=(c, x, y, z),
+    shape=(c, x, y),
     dtype="|f2",
 )
 
@@ -133,7 +133,7 @@ slices = Slicer(image,
                 batch_size=64,
                 collate=collate)
 
-pytorch_model = lambda x: nn.Conv2d(3, 1, kernel_size=3)
+pytorch_model = lambda x: nn.Conv3d(3, 1, kernel_size=3)
 
 for crop, source, destination in slices:
     assert crop.ndim == 4  # crop shape is -> [B=64, 3, 512, 512]

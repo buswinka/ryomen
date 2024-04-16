@@ -1,3 +1,4 @@
 .pytest_cache
 .*_cache
+
 /tests/.pytest_cache/
