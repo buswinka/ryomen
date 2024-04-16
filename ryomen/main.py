@@ -132,7 +132,7 @@ class Slicer:
         >>> for crop, index = Slicer(image, crop_size, overlap, batch_size=8)
         >>>     print(len(crop))  # 8
 
-        Now with a custom colate function...
+        Now with a custom collate function...
 
         >>> import numpy as np
         >>> from ryomen import Slicer
