@@ -146,4 +146,4 @@ for crop, source, destination in slices:
         output[_destination] = crop[b, ...][_source]  
 ```
 
-Ryomen is named after the first name of the main antagonist of JJK who slices up everything.
+Ryomen is titled after the first name of the main antagonist of JJK who slices up everything.
