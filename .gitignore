@@ -2,3 +2,9 @@
 .*_cache
 
 /tests/.pytest_cache/
+.zed
+.idea
+build
+*.egg-info
+dist
+__pycache__

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from types import EllipsisType
 from typing import (
     Sequence,
     Tuple,
@@ -12,7 +13,8 @@ from typing import (
 from copy import copy
 
 Shape = Sequence[int]
-Index = Tuple[Union[type(Ellipsis), slice]]
+Index = Tuple[Union[type(Ellipsis), slice], ...]
+
 
 class TensorLike:
     """ generic class for any tensor like object: zarr, numpy, pytorch, etc... """
@@ -30,7 +32,7 @@ class TensorLike:
 
 
 def _get_next_slice(
-    ind: List[int], c: List[int], o: List[int], shape: Shape
+    ind: List[int], c: List[int], o: List[int], shape: Shape, pad: bool
 ) -> Tuple[Index, List[int]]:
     """
     given a current index ind, a crop c, overlap o, and image shape
@@ -44,37 +46,44 @@ def _get_next_slice(
     :return: Slice of
     """
 
-    indices = [Ellipsis]
+    indices: list[EllipsisType | slice] = [Ellipsis]
     for i in range(len(shape)):
 
-        _x = ind[i] if ind[i] + c[i] <= shape[i] else shape[i] - c[i]
+        _x = ind[i] if ind[i] + c[i] <= shape[i] + (o[i] * pad) else shape[i] - c[i] + (o[i] * pad)
         indices.append(slice(_x, _x + c[i], 1))
 
     i = 0
     while i < len(shape):
         if ind[i] + c[i] - o[i] * 2 <= shape[i]:
-            ind[i] += +c[i] - o[i] * 2
-            i = float("inf")
+            break
         else:
             ind[i] = 0
             i += 1
+
     return tuple(indices), ind
 
 
-def _nd_generator(crop, overlap, shape) -> Generator[Tuple[Index, Sequence[int]]]:
+def _nd_generator(
+    crop, overlap, shape, pad: bool
+) -> Generator[Tuple[Index, Sequence[int]], None, None]:
     """ so cursed """
 
     assert len(crop) == len(overlap)
 
+    # In the weird case where an overlap is larger than a crop, we should fail here...
     for c, o in zip(crop, overlap):
         if not c > o * 2:
             raise ValueError("Crop Size must be larger than overlap * 2")
 
-    x = [0 for _ in crop]
+    # init a list of zeros as the "first" crop location
+    x = [0 if pad else -o for _, o in zip(crop, overlap)]
     assert len(shape) >= len(crop)
+
+    # copy because lists are mutable and we need to mutate it in this scope but not the higher one...
     shape = copy(list(shape))
 
-    # Get to identical shape
+    # Leading dimensions are allowed, therefore we pop off all leading dimensions until the shape
+    # and crop shape are the same!
     while len(shape) > len(crop):
         shape.pop(0)
 
@@ -89,6 +98,14 @@ def _nd_generator(crop, overlap, shape) -> Generator[Tuple[Index, Sequence[int]]
     yield ind, x
 
 
+def default_colate(x: Sequence[TensorLike]) -> TensorLike | Sequence[TensorLike]:
+    return x
+
+
+def default_progress_bar(x: Iterator | Generator) -> Any:
+    return x
+
+
 class Slicer:
     def __init__(
         self,
@@ -96,11 +113,12 @@ class Slicer:
         crop_size: Sequence[int],
         overlap: Sequence[int],
         batch_size: int = 1,
+        pad: bool = False,
         output_transform: Callable[[TensorLike], TensorLike] = lambda x: x,
         collate: Callable[
-            [Sequence[TensorLike]], TensorLike | List[TensorLike]
-        ] = lambda x: x,
-        progress_bar: Callable[[Iterator | Generator], Any] = lambda x: x,
+            [Sequence[TensorLike]], TensorLike | Sequence[TensorLike]
+        ] = default_colate,
+        progress_bar: Callable[[Iterator | Generator], Any] = default_progress_bar,
     ):
         """
         BioCropper is a generic cropping utility for separating up large microscopy images into smaller,
@@ -129,7 +147,7 @@ class Slicer:
         >>> from ryomen import Slicer
         >>> image = np.random.randn((3, 100, 100, 100))  # A large, 3D array with a color channel
         >>> crop_size, overlap = (10, 10, 10), (2, 2, 2)  # we want to crop on the spatial dimensions!
-        >>> for crop, index = Slicer(image, crop_size, overlap, batch_size=8)
+        >>> for crop, index = Slicer(maige, crop_size, overlap, batch_size=8)
         >>>     print(len(crop))  # 8
 
         Now with a custom collate function...
@@ -158,6 +176,7 @@ class Slicer:
         :param crop_size: Tuple ints for cropping dimensions
         :param overlap: Tuple of ints for the overlap between crops
         :param batch_size: batch size of crops. Allows for returning multiple crops in one iteration
+        :param pad: pads the image by overlap if true. Only supported if input tensor implements a flip method.
         :param output_transform: function to apply to each crop before returning
         :param collate: function to collate images, the default behavior is to return a list of crops
         :param progress_bar: function which wraps the iteration and displays a progress bar. (e.g. tqdm)
@@ -171,6 +190,7 @@ class Slicer:
         self.__output_fn = output_transform
         self.__collate_fn = collate
         self.__progress_bar = progress_bar
+        self.__can_pad = hasattr(self.__image, 'flip')
 
         # Check that all of the nasty inputs are handled...
         self._check_validity()
@@ -186,16 +206,21 @@ class Slicer:
                 else image_shape[i + len(image_shape) - len(self.__crop_size)]
             )
 
-
     def _check_validity(self):
         """ simply checks the validity of all inputs """
 
-        if not hasattr(self.__image, 'size'):
-            raise ValueError(f'Input array of type {type(self.__image)} does not have the method: size')
-        if not hasattr(self.__image, '__getitem__'):
-            raise ValueError(f'Input array of type {type(self.__image)} does not have the method: __getitem__')
-        if not hasattr(self.__image, 'shape'):
-            raise ValueError(f'Input array of type {type(self.__image)} does not have the method: shape')
+        if not hasattr(self.__image, "size"):
+            raise ValueError(
+                f"Input array of type {type(self.__image)} does not have the method: size"
+            )
+        if not hasattr(self.__image, "__getitem__"):
+            raise ValueError(
+                f"Input array of type {type(self.__image)} does not have the method: __getitem__"
+            )
+        if not hasattr(self.__image, "shape"):
+            raise ValueError(
+                f"Input array of type {type(self.__image)} does not have the method: shape"
+            )
 
         shape: Shape = self.__image.shape
 
@@ -250,7 +275,17 @@ class Slicer:
                 f"All crops collated would result in {n} batches. {n} < {self.__batch_size}"
             )
 
-    def __iter__(self) -> Tuple[TensorLike | List[TensorLike], Index, Index]:
+    def __iter__(
+        self,
+    ) -> Generator[
+        Tuple[
+            TensorLike | List[TensorLike],
+            Index | Sequence[Index],
+            Index | Sequence[Index],
+        ],
+        None,
+        None,
+    ]:
         image_shape: Shape = self.__image.shape  # C, X, Y, Z
 
         output_cache = []
@@ -260,11 +295,11 @@ class Slicer:
 
             # _nd_generator returns a list of slices
             source = self._source()
-            destination = self._destination(tuple(a.start for a in ind if isinstance(a, slice)), image_shape)
-            crop = self.__image[tuple(ind)]
-            output_cache.append(
-                (self.__output_fn(crop), source, destination)
+            destination = self._destination(
+                tuple(a.start for a in ind if isinstance(a, slice)), image_shape
             )
+            crop = self.__image[tuple(ind)]
+            output_cache.append((self.__output_fn(crop), source, destination))
 
             # If we've added more to the output cache than the batch size, we flush the batch away
             if len(output_cache) == self.__batch_size:
@@ -274,15 +309,17 @@ class Slicer:
         if len(output_cache) > 0:
             yield self._flush_output(output_cache)
 
-    def _flush_output(self, output_cache):
+    def _flush_output(
+        self, output_cache
+    ) -> Tuple[
+        TensorLike | List[TensorLike], Index | Sequence[Index], Index | Sequence[Index]
+    ]:
         """ pop off the cache and convert to images, sources, and destinations """
         output = []
         for i in range(len(output_cache)):
             output.append(output_cache.pop(0))
 
-        images: List[TensorLike] | TensorLike = self.__collate_fn(
-            [t for t, s, d in output]
-        )
+        images: Sequence[TensorLike] | TensorLike = [t for t, s, d in output]
         sources: List[Index] = [tuple(s) for t, s, d in output]
         destinations: List[Index] = [tuple(d) for t, s, d in output]
 
@@ -302,6 +339,23 @@ class Slicer:
             )
         return self.__N
 
+    def _index_image_with_pad(self, index: Sequence[Index]):
+        # axis is smaller (-1) or larger than size
+        shape = copy(list(self.__image.shape))
+        while len(shape) < len(self.__crop_size):
+            shape.pop(0)  # remove leading dim
+
+        index = copy(index)
+        index.pop(0)  # alwasys an Ellipsis
+
+        for i, (ind, s) in enumerate(zip(index)):
+            # ind should alwaus be a slice!
+            if ind.start < 0:
+                pad, other = self.__image, None# Hard!
+                raise NotImplementedError
+
+
+
     def _source(self) -> Index:
         """ returns indices of the crop excluding overlap """
         source = [Ellipsis]
@@ -317,23 +371,9 @@ class Slicer:
         while len(shape) > len(self.__crop_size):
             shape.pop(0)
 
-        destination: Sequence[Ellipsis | slice] = [Ellipsis]
+        destination: Sequence[EllipsisType | slice] = [Ellipsis]
         for a, c, o, s in zip(xyz, self.__crop_size, self.__overlap, shape):
-            a = a if a + c <= s else s - c
+            a = a if a + c <= s + (self.__can_pad * o) else s - c
             destination += [slice(a + o, a + c - o, 1)]
 
         return tuple(destination)
-
-
-if __name__ == "__main__":
-    import numpy as np
-    image = np.random.randn(1, 10, 10, 10)
-    output = np.empty_like(image)
-    crop = (5, 5, 5)
-    overlap = [0, 0, 0]
-    
-    crop_iterator = Slicer(image, crop_size=crop, overlap=overlap)
-    for crop, source, destination in crop_iterator:
-        output[destination] = crop[source]
-    
-    assert np.allclose(image, output)
