@@ -10,10 +10,11 @@ from typing import (
     Generator,
     Union,
 )
-from copy import copy
+from copy import copy, deepcopy
 
 Shape = Sequence[int]
 Index = Tuple[Union[type(Ellipsis), slice], ...]
+SliceList = List[Union[type(Ellipsis), slice]]
 
 
 class TensorLike:
@@ -27,7 +28,19 @@ class TensorLike:
     def __getitem__(self, item: Any) -> TensorLike:
         ...
 
+    def __setitem__(self, index: Any, item: Any) -> TensorLike:
+        ...
+
+    def __iter__(self) -> Iterator:
+        ...
+
+    def __next__(self) -> TensorLike:
+        ...
+
     def size(self) -> Shape:
+        ...
+
+    def flip(self, dim: int) -> TensorLike:
         ...
 
 
@@ -42,24 +55,23 @@ def _get_next_slice(
     :param ind: list of the current coordinate pos
     :param c: crop size
     :param o: overlap size
-    :param shape: shape of ultimate image
+    :param shape: shape of ultimate e
     :return: Slice of
     """
 
     indices: list[EllipsisType | slice] = [Ellipsis]
     for i in range(len(shape)):
-
         _x = ind[i] if ind[i] + c[i] <= shape[i] + (o[i] * pad) else shape[i] - c[i] + (o[i] * pad)
         indices.append(slice(_x, _x + c[i], 1))
 
     i = 0
     while i < len(shape):
-        if ind[i] + c[i] - o[i] * 2 <= shape[i]:
+        if ind[i] + c[i] - o[i] * 2 <= shape[i] + (o[i] * pad):
+            ind[i] += c[i] - o[i] * 2
             break
         else:
-            ind[i] = 0
+            ind[i] = -o[i] if pad else 0
             i += 1
-
     return tuple(indices), ind
 
 
@@ -67,16 +79,15 @@ def _nd_generator(
     crop, overlap, shape, pad: bool
 ) -> Generator[Tuple[Index, Sequence[int]], None, None]:
     """ so cursed """
-
     assert len(crop) == len(overlap)
 
     # In the weird case where an overlap is larger than a crop, we should fail here...
     for c, o in zip(crop, overlap):
         if not c > o * 2:
-            raise ValueError("Crop Size must be larger than overlap * 2")
+            raise ValueError(f"Crop Size must be larger than overlap * 2. {c=} !> {o=} * 2")
 
     # init a list of zeros as the "first" crop location
-    x = [0 if pad else -o for _, o in zip(crop, overlap)]
+    x = [-o if pad else 0 for _, o in zip(crop, overlap)]
     assert len(shape) >= len(crop)
 
     # copy because lists are mutable and we need to mutate it in this scope but not the higher one...
@@ -87,14 +98,13 @@ def _nd_generator(
     while len(shape) > len(crop):
         shape.pop(0)
 
-    ind, x = _get_next_slice(x, crop, overlap, shape)
-    while not all((a + c) > b for a, b, c, o in zip(x, shape, crop, overlap)):
+    ind, x = _get_next_slice(x, crop, overlap, shape, pad)
+    while not all((a + c) > b + (o * pad) for a, b, c, o in zip(x, shape, crop, overlap)):
         yield ind, x
-        ind, x = _get_next_slice(x, crop, overlap, shape)
-
+        ind, x = _get_next_slice(x, crop, overlap, shape, pad)
     yield ind, x
 
-    ind, x = _get_next_slice(x, crop, overlap, shape)
+    ind, x = _get_next_slice(x, crop, overlap, shape, pad)
     yield ind, x
 
 
@@ -190,21 +200,50 @@ class Slicer:
         self.__output_fn = output_transform
         self.__collate_fn = collate
         self.__progress_bar = progress_bar
-        self.__can_pad = hasattr(self.__image, 'flip')
+
+        self.__can_pad = (
+            False  # Default, is changed to value of pad after suitable checks
+        )
+        self.__support_negative_strides = (
+            False  # Default, is changed to true after suitable checks
+        )
 
         # Check that all of the nasty inputs are handled...
         self._check_validity()
 
         # Adjust crop size such that we can return images smaller than crop size.
         # This is silent and might be confusing. The user should never have to access the crop size after creation.
+
+        self.__user_defined_crop_larger_than_image = False
         image_shape = self.__image.shape
+
         for i, size in enumerate(self.__crop_size):
+            if (
+                not self.__crop_size[i]
+                < image_shape[i + len(image_shape) - len(self.__crop_size)]
+            ):
+                self.__user_defined_crop_larger_than_image = True
+
             self.__crop_size[i] = (
                 self.__crop_size[i]
                 if self.__crop_size[i]
                 < image_shape[i + len(image_shape) - len(self.__crop_size)]
                 else image_shape[i + len(image_shape) - len(self.__crop_size)]
             )
+
+        try:
+            self.__image[0:1:-1, ...]  # can flip with negative indices
+            self.__support_negative_strides = True
+            self.__can_pad = pad
+
+        except:
+            if not hasattr(self.__image, "flip"):
+
+                raise RuntimeError(
+                    "Your image array does not implement a flip method or support negative strides. Therefore, padding is not supported."
+                )
+            else:
+                self.__can_pad = pad
 
     def _check_validity(self):
         """ simply checks the validity of all inputs """
@@ -267,7 +306,11 @@ class Slicer:
             raise ValueError(f"Batch sizes must be a positive integer > 0")
 
         n = len(
-            list(_nd_generator(self.__crop_size, self.__overlap, self.__image.shape))
+            list(
+                _nd_generator(
+                    self.__crop_size, self.__overlap, self.__image.shape, self.__can_pad
+                )
+            )
         )
         if self.__batch_size > n:
             raise RuntimeError(
@@ -279,7 +322,7 @@ class Slicer:
         self,
     ) -> Generator[
         Tuple[
-            TensorLike | List[TensorLike],
+            TensorLike | Sequence[TensorLike],
             Index | Sequence[Index],
             Index | Sequence[Index],
         ],
@@ -289,8 +332,8 @@ class Slicer:
         image_shape: Shape = self.__image.shape  # C, X, Y, Z
 
         output_cache = []
-        for ind, _ in self.__progress_bar(
-            _nd_generator(self.__crop_size, self.__overlap, image_shape)
+        for ind, xyz in self.__progress_bar(
+            _nd_generator(self.__crop_size, self.__overlap, image_shape, self.__can_pad)
         ):
 
             # _nd_generator returns a list of slices
@@ -298,63 +341,209 @@ class Slicer:
             destination = self._destination(
                 tuple(a.start for a in ind if isinstance(a, slice)), image_shape
             )
-            crop = self.__image[tuple(ind)]
+            crop = self._index_image_with_pad(tuple(ind))
             output_cache.append((self.__output_fn(crop), source, destination))
 
             # If we've added more to the output cache than the batch size, we flush the batch away
             if len(output_cache) == self.__batch_size:
                 yield self._flush_output(output_cache)
 
-        # Final Yield - we may have a smaller batch size than expected...
         if len(output_cache) > 0:
             yield self._flush_output(output_cache)
 
     def _flush_output(
         self, output_cache
     ) -> Tuple[
-        TensorLike | List[TensorLike], Index | Sequence[Index], Index | Sequence[Index]
+        TensorLike | Sequence[TensorLike],
+        Index | Sequence[Index],
+        Index | Sequence[Index],
     ]:
         """ pop off the cache and convert to images, sources, and destinations """
         output = []
         for i in range(len(output_cache)):
             output.append(output_cache.pop(0))
 
-        images: Sequence[TensorLike] | TensorLike = [t for t, s, d in output]
+        images: Sequence[TensorLike] | TensorLike = self.__collate_fn(
+            [t for t, s, d in output]
+        )
+
         sources: List[Index] = [tuple(s) for t, s, d in output]
         destinations: List[Index] = [tuple(d) for t, s, d in output]
 
-        if len(images) == len(sources) == len(destinations) == 1:
+        if (
+            isinstance(images, list)
+            and len(images) == len(sources) == len(destinations) == 1
+        ):
             return images[0], sources[0], destinations[0]
 
         else:
             return images, sources, destinations
 
     def __len__(self):
+
         """ Returns the number of slices this iterator will iterate over """
         if self.__N is None:
             self.__N = len(
                 list(
-                    _nd_generator(self.__crop_size, self.__overlap, self.__image.shape)
+                    _nd_generator(
+                        self.__crop_size,
+                        self.__overlap,
+                        self.__image.shape,
+                        pad=self.__can_pad,
+                    )
                 )
             )
         return self.__N
 
-    def _index_image_with_pad(self, index: Sequence[Index]):
+    @staticmethod
+    def minmax(a: slice, m: int) -> slice:
+
+        if a.start < 0:
+            delta = abs(a.start)
+            a = slice(a.start + delta, a.stop + delta, a.step)
+        elif a.stop > m:
+            delta = abs(a.stop - m)
+            a = slice(a.start - delta, a.stop - delta, a.step)
+
+        return slice(min(max(a.start, 0), m), min(max(a.stop, 0), m), a.step)
+
+    def _index_image_with_pad(self, index: Index) -> TensorLike:
+        """
+        Terrible function to index the image, and through indexing alone, pads the image with reflections. It
+        should do this in N Dimensions, but was an absolute nightmare to code, and there are so many edge cases. Ive
+        tried my best to handle as many as possible, but innevitably some may fall through thte cracks.
+        :param index:
+        :return:
+        """
+
+        if not self.__can_pad:
+            return self.__image[index]
+
         # axis is smaller (-1) or larger than size
         shape = copy(list(self.__image.shape))
         while len(shape) < len(self.__crop_size):
             shape.pop(0)  # remove leading dim
 
-        index = copy(index)
-        index.pop(0)  # alwasys an Ellipsis
+        # Remove all Ellipsis. There should only be one at position 0, however this
+        # implementation makes linters happy...
+        modified_index: List[slice] = [
+            s for s in list(copy(index)) if isinstance(s, slice)
+        ]
 
-        for i, (ind, s) in enumerate(zip(index)):
-            # ind should alwaus be a slice!
+        # First we check if any padding is even necessary...
+        padding_necessary = False
+        for i, (ind, s, o) in enumerate(zip(modified_index, shape, self.__overlap)):
             if ind.start < 0:
-                pad, other = self.__image, None# Hard!
-                raise NotImplementedError
+                padding_necessary = True
+            elif ind.stop > s:
+                padding_necessary = True
 
+        if not padding_necessary:
+            return self.__image[index]
 
+        # We have a problem! We need a library agnostic way to create a tensor and pop it in...
+        # We can do this by indexing another part of the tensor, and doing a deepcopy. I think
+        # this should work for basically everything. Unsure about zarr...
+        # we can then slot the info into this output array
+        _output_index, _ = _get_next_slice(
+            [0 for _ in self.__crop_size],
+            c=self.__crop_size,
+            o=self.__overlap,
+            shape=shape,
+            pad=False,
+        )
+
+        output_array = (self.__image[_output_index] / float("inf")) + 1
+        first_access = False
+        n_leading_dimensions = len(shape) - len(self.__crop_size)
+        for i, (ind, s, o) in enumerate(zip(modified_index, shape, self.__overlap)):
+            pad = None
+            other = None
+
+            padding_source: SliceList = [Ellipsis]
+            other_source: SliceList = [Ellipsis]
+            padding_destination: SliceList = [Ellipsis]
+            other_destination: SliceList = [Ellipsis]
+
+            # Padding on the left
+            if ind.start < 0:
+                for d, (current_slice, c) in enumerate(
+                    zip(modified_index, self.__crop_size)
+                ):
+                    x = c if first_access else shape[d + n_leading_dimensions]
+                    if i + n_leading_dimensions != d:
+                        padding_source.append(self.minmax(current_slice, c if first_access else x))
+                        other_source.append(self.minmax(current_slice, c if first_access else x))
+                        padding_destination.append(slice(0, c, 1))
+                        other_destination.append(slice(0, c, 1))
+                    else:
+                        padding_source.append(
+                            slice(abs(ind.start) - 1, None, -1)
+                            if self.__support_negative_strides
+                            else slice(0, abs(ind.start), 1)
+                        )
+                        padding_destination.append(slice(0, abs(ind.start), 1))
+                        other_source.append(slice(0, ind.stop, 1))
+                        other_destination.append(slice(abs(ind.start), None, 1))
+
+                to_acces = output_array if first_access else self.__image
+                if self.__support_negative_strides:
+                    pad = to_acces[tuple(padding_source)]
+                else:
+                    pad = to_acces[tuple(padding_source)].flip(
+                        i + len(shape) - len(self.__crop_size)
+                    )
+
+                other = to_acces[tuple(other_source)]
+
+            if pad is not None:
+                try:
+                    output_array[tuple(other_destination)] = other
+                    output_array[tuple(padding_destination)] = pad
+                except:
+                    pass
+                    raise RuntimeError
+                first_access = True
+
+            # Padding on the right
+            elif ind.stop > s:
+                for d, (current_slice, c) in enumerate(
+                    zip(modified_index, self.__crop_size)
+                ):
+                    x = c if first_access else shape[d + n_leading_dimensions]
+                    if i + len(shape) - len(self.__crop_size) != d:
+                        padding_source.append(self.minmax(current_slice, x))
+                        other_source.append(self.minmax(current_slice, x))
+                        padding_destination.append(slice(0, c, 1))
+                        other_destination.append(slice(0, c, 1))
+                    else:
+
+                        padding_source.append(
+                            slice(x, -(ind.stop - s) - 1, -1)
+                            if self.__support_negative_strides
+                            else slice(-(ind.stop - s), x, 1)
+                        )
+                        other_source.append(slice(ind.stop - s if first_access else current_slice.start, x))
+                        padding_destination.append(slice(-(ind.stop - s), c, 1))
+                        other_destination.append(slice(0, -(ind.stop - s), 1))
+
+                    to_acces = output_array if first_access else self.__image
+                    if self.__support_negative_strides:
+                        pad = to_acces[tuple(padding_source)]
+                    else:
+                        pad = to_acces[tuple(padding_source)].flip(
+                            i + len(shape) - len(self.__crop_size)
+                        )
+
+                    other = to_acces[tuple(other_source)]
+
+                if pad is not None:
+                    output_array[tuple(other_destination)] = other
+                    output_array[tuple(padding_destination)] = pad
+
+                    first_access = True
+        pass
+        return output_array
 
     def _source(self) -> Index:
         """ returns indices of the crop excluding overlap """
@@ -373,7 +562,7 @@ class Slicer:
 
         destination: Sequence[EllipsisType | slice] = [Ellipsis]
         for a, c, o, s in zip(xyz, self.__crop_size, self.__overlap, shape):
-            a = a if a + c <= s + (self.__can_pad * o) else s - c
-            destination += [slice(a + o, a + c - o, 1)]
+            a = a if a + c < s + (self.__can_pad * o) else s - c + (self.__can_pad * o)
+            destination += [slice(a + o, (a + c) - o, 1)]
 
         return tuple(destination)

@@ -3,16 +3,38 @@ from ryomen.main import Slicer, _nd_generator
 import numpy as np
 
 
+def test_that_nd_gen_finishes():
+    max = 10000
+    counter = 0
+    for ind, xyz in _nd_generator(
+        crop=[10, 10, 10], overlap=[2, 2, 2], shape=(100, 100, 10), pad=False
+    ):
+        counter += 1
+        assert counter < max
+
+    # now do it with padding
+    max = 10000
+    counter = 0
+    for ind, xyz in _nd_generator(
+        crop=[10, 10, 10], overlap=[2, 2, 2], shape=(100, 100, 10), pad=True
+    ):
+        counter += 1
+        assert counter < max
+
+
 def test_non_array_input():
     with pytest.raises(ValueError):
-        Slicer(image=[[1,2,3,4], [1,2,3,4, 5], [1, 2, 3, 4, 5]], crop_size=(2,), overlap=(0,0))
-
+        Slicer(
+            image=[[1, 2, 3, 4], [1, 2, 3, 4, 5], [1, 2, 3, 4, 5]],
+            crop_size=(2,),
+            overlap=(0, 0),
+        )
 
 
 def test_total_3d_ind_coverage():
     image = np.zeros((100, 100, 10))
     for ind, xyz in _nd_generator(
-        crop=[10, 10, 10], overlap=[2, 2, 2], shape=image.shape
+        crop=[10, 10, 10], overlap=[2, 2, 2], shape=image.shape, pad=False
     ):
         image[tuple(ind)] = 1
     assert np.all(image == 1)
@@ -21,7 +43,9 @@ def test_total_3d_ind_coverage():
 def test_total_2d_ind_coverage():
 
     image = np.zeros((100, 100))
-    for ind, xyz in _nd_generator(crop=[30, 30], overlap=[10, 10], shape=image.shape):
+    for ind, xyz in _nd_generator(
+        crop=[30, 30], overlap=[10, 10], shape=image.shape, pad=False
+    ):
         image[tuple(ind)] = 1
     assert np.all(image == 1)
 
@@ -30,10 +54,11 @@ def test_total_5d_ind_coverage():
 
     image = np.zeros((30, 30, 30, 30, 30))
     for ind, xyz in _nd_generator(
-        crop=[10, 10, 10, 10, 10], overlap=[2,] * 5, shape=image.shape
+        crop=[10, 10, 10, 10, 10], overlap=[2,] * 5, shape=image.shape, pad=False
     ):
         image[tuple(ind)] = 1
     assert np.all(image == 1)
+
 
 def test_source_destination():
     image = np.random.randn(1, 100, 100, 100)
@@ -46,6 +71,7 @@ def test_source_destination():
         a = output[destination]
         b = crop[source]
         assert a.shape == b.shape, source
+
 
 def test_all_crops_same_size():
     image = np.random.randn(100, 100, 100)
@@ -60,7 +86,9 @@ def test_all_crops_same_size():
     crops = []
     for crop, source, destination in crop_iterator:
         crops.append(crop)
-    assert all([same_size(c.shape, cropsize) for c in crops]), f'{source=}, {destination=}'
+    assert all(
+        [same_size(c.shape, cropsize) for c in crops]
+    ), f"{source=}, {destination=}"
 
 
 def test_nonfunctional_runtime():
@@ -122,9 +150,8 @@ def test_strange_crop():
     crop_iterator = Slicer(image, crop_size=crop, overlap=overlap)
     for crop, source, destination in crop_iterator:
         output[destination] = crop[source]
-    
-    assert np.allclose(image, output)
 
+    assert np.allclose(image, output)
 
 
 def test_strangely_large_crop():
@@ -158,6 +185,7 @@ def test_for_valid_inputs():
     with pytest.raises(TypeError):
         Slicer(image, (10, 10, 10), (2, 2, 2), batch_size=0.2)
 
+
 def test_batch_size():
     image = np.random.randn(100, 100, 90)
     output = np.empty_like(image)
@@ -177,7 +205,9 @@ def test_collate_fn():
 
     collate = lambda x: np.stack(x, axis=0)
 
-    crop_iterator = Slicer(image, crop_size=crop, overlap=overlap, collate=collate, batch_size=10)
+    crop_iterator = Slicer(
+        image, crop_size=crop, overlap=overlap, collate=collate, batch_size=10
+    )
     for crop, source, destination in crop_iterator:
         assert crop.shape[0] == 10
 
@@ -191,11 +221,35 @@ def test_batched_source_destination_agreement():
     def fn(x):
         return x * 100 - 3
 
-    crop_iterator = Slicer(image, crop_size=crop, overlap=overlap, output_transform=fn, batch_size=10)
+    crop_iterator = Slicer(
+        image, crop_size=crop, overlap=overlap, output_transform=fn, batch_size=10
+    )
     for crop, source, destination in crop_iterator:
         for _crop, _source, _destination in zip(crop, source, destination):
             output[_destination] = _crop[_source]
             assert np.allclose(_crop[_source], image[_destination] * 100 - 3)
+
+
+def test_batched_source_destination_agreement_with_pad():
+    image = np.random.randn(20, 10, 10)
+    output = np.empty_like(image)
+    crop = (10, 10, 10)
+    overlap = [2, 2, 2]
+
+    def fn(x):
+        return x * 100 - 3
+
+    crop_iterator = Slicer(
+        image,
+        crop_size=crop,
+        overlap=overlap,
+        output_transform=fn,
+        batch_size=10,
+        pad=True,
+    )
+    for crop, source, destination in crop_iterator:
+        for _crop, _source, _destination in zip(crop, source, destination):
+            output[_destination] = _crop[_source]
 
     assert np.allclose((image * 100) - 3, output)
 
@@ -212,6 +266,7 @@ def test_src_dest_zero_overlap():
 
     assert np.allclose(image, output)
 
+
 def test_source_destination_identity_agreement():
     import numpy as np
 
@@ -227,6 +282,7 @@ def test_source_destination_identity_agreement():
     for crop, source, destination in crop_iterator:
         output[destination] = crop[source]
         assert np.allclose(crop[source], image[destination])
+
 
 def test_output_fn():
     image = np.random.randn(20, 10, 10)

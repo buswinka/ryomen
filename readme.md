@@ -146,4 +146,12 @@ for crop, source, destination in slices:
         output[_destination] = crop[b, ...][_source]  
 ```
 
+### Change Log
+#### 0.0.3
+    - padding now works with pure indexing, for reflections. Tested up to 3D with numpy. 
+
+
+#### 0.0.2
+    - First working version
+
 Ryomen is titled after the first name of the main antagonist of JJK who slices up everything.
