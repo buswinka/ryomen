@@ -147,11 +147,11 @@ for crop, source, destination in slices:
 ```
 
 ### Change Log
-#### 0.0.3
+#### 0.0.4
     - padding now works with pure indexing, for reflections. Tested up to 3D with numpy. 
 
 
-#### 0.0.2
+#### 0.0.3
     - First working version
 
 Ryomen is titled after the first name of the main antagonist of JJK who slices up everything.
