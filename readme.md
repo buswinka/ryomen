@@ -1,5 +1,6 @@
+<img src="resources/logo.svg" width="400" />
+
 # Ryomen
-## For slicing up large microscopy images
 
 Ryomen is a lightweight, no dependency utility for working with large biological microscopy images. 
 
