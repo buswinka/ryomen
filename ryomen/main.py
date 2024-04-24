@@ -486,24 +486,17 @@ class Slicer:
                         other_source.append(slice(0, ind.stop, 1))
                         other_destination.append(slice(abs(ind.start), None, 1))
 
-                to_acces = output_array if first_access else self.__image
-                if self.__support_negative_strides:
-                    pad = to_acces[tuple(padding_source)]
-                else:
-                    pad = to_acces[tuple(padding_source)].flip(
-                        i + len(shape) - len(self.__crop_size)
-                    )
+                to_access = output_array if first_access else self.__image
 
-                other = to_acces[tuple(other_source)]
+                pad = deepcopy(to_access[tuple(padding_source)])
+                if not self.__support_negative_strides:
+                    pad = pad.flip(i + len(shape) - len(self.__crop_size))
+                other = deepcopy(to_access[tuple(other_source)])
 
-            if pad is not None:
-                try:
+                if pad is not None:
                     output_array[tuple(other_destination)] = other
                     output_array[tuple(padding_destination)] = pad
-                except:
-                    pass
-                    raise RuntimeError
-                first_access = True
+                    first_access = True
 
             # Padding on the right
             elif ind.stop > s:
@@ -527,22 +520,18 @@ class Slicer:
                         padding_destination.append(slice(-(ind.stop - s), c, 1))
                         other_destination.append(slice(0, -(ind.stop - s), 1))
 
-                    to_acces = output_array if first_access else self.__image
-                    if self.__support_negative_strides:
-                        pad = to_acces[tuple(padding_source)]
-                    else:
-                        pad = to_acces[tuple(padding_source)].flip(
-                            i + len(shape) - len(self.__crop_size)
-                        )
+                to_access = output_array if first_access else self.__image
 
-                    other = to_acces[tuple(other_source)]
+                pad = deepcopy(to_access[tuple(padding_source)])
+                if not self.__support_negative_strides:
+                    pad = pad.flip(i + len(shape) - len(self.__crop_size))
+                other = deepcopy(to_access[tuple(other_source)])
 
                 if pad is not None:
                     output_array[tuple(other_destination)] = other
                     output_array[tuple(padding_destination)] = pad
-
                     first_access = True
-        pass
+
         return output_array
 
     def _source(self) -> Index:
