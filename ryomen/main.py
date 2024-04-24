@@ -45,7 +45,7 @@ class TensorLike:
 
 
 def _get_next_slice(
-    ind: List[int], c: List[int], o: List[int], shape: Shape, pad: bool
+        ind: List[int], c: List[int], o: List[int], shape: Shape, pad: bool
 ) -> Tuple[Index, List[int]]:
     """
     given a current index ind, a crop c, overlap o, and image shape
@@ -76,7 +76,7 @@ def _get_next_slice(
 
 
 def _nd_generator(
-    crop, overlap, shape, pad: bool
+        crop: List[int], overlap: List[int], shape: Shape, pad: bool
 ) -> Generator[Tuple[Index, Sequence[int]], None, None]:
     """ so cursed """
     assert len(crop) == len(overlap)
@@ -90,6 +90,10 @@ def _nd_generator(
     x = [-o if pad else 0 for _, o in zip(crop, overlap)]
     assert len(shape) >= len(crop)
 
+    # We cache all previous indices here, as the cost of looking this up
+    # is presumably less than the cost of re-running the expensive fn
+    previously_yeilded = []
+
     # copy because lists are mutable and we need to mutate it in this scope but not the higher one...
     shape = copy(list(shape))
 
@@ -100,12 +104,20 @@ def _nd_generator(
 
     ind, x = _get_next_slice(x, crop, overlap, shape, pad)
     while not all((a + c) > b + (o * pad) for a, b, c, o in zip(x, shape, crop, overlap)):
-        yield ind, x
+        if str(ind) not in previously_yeilded:
+            previously_yeilded.append(str(ind))
+            yield ind, x
+
         ind, x = _get_next_slice(x, crop, overlap, shape, pad)
-    yield ind, x
+
+    if str(ind) not in previously_yeilded:
+        previously_yeilded.append(str(ind))
+        yield ind, x
 
     ind, x = _get_next_slice(x, crop, overlap, shape, pad)
-    yield ind, x
+    if str(ind) not in previously_yeilded:
+        previously_yeilded.append(str(ind))
+        yield ind, x
 
 
 def default_colate(x: Sequence[TensorLike]) -> TensorLike | Sequence[TensorLike]:
@@ -118,23 +130,26 @@ def default_progress_bar(x: Iterator | Generator) -> Any:
 
 class Slicer:
     def __init__(
-        self,
-        image: TensorLike,
-        crop_size: Sequence[int],
-        overlap: Sequence[int],
-        batch_size: int = 1,
-        pad: bool = False,
-        output_transform: Callable[[TensorLike], TensorLike] = lambda x: x,
-        collate: Callable[
-            [Sequence[TensorLike]], TensorLike | Sequence[TensorLike]
-        ] = default_colate,
-        progress_bar: Callable[[Iterator | Generator], Any] = default_progress_bar,
+            self,
+            image: TensorLike,
+            crop_size: Sequence[int],
+            overlap: Sequence[int],
+            batch_size: int = 1,
+            pad: bool = False,
+            output_transform: Callable[[TensorLike], TensorLike] = lambda x: x,
+            collate: Callable[
+                [Sequence[TensorLike]], TensorLike | Sequence[TensorLike]
+            ] = default_colate,
+            progress_bar: Callable[[Iterator | Generator], Any] = default_progress_bar,
     ):
         """
-        BioCropper is a generic cropping utility for separating up large microscopy images into smaller,
-        equal sized, sub crops. It works on any array type as long as that array has the methods __getitem__(), size(),
-        and a class variable: size. Tested Array types include: numpy.ndarray, torch.Tensor, zarr.Array
+        Ryomen is a generic cropping utility for separating up large microscopy images into smaller,
+        equal sized, sub crops.
 
+        Ryomen works with any generic array type, as long as it implements the following methods: __getitem__,
+        __setitem__, __iter__, and __size__. Furthermore, the array type must support either a flip method, or
+        support negative indexing, and must implement a parameter shape. These criteria basically fit all
+        numpy-like arrays. Tested array libraries include zarr, numpy, and pytorch.
 
         Basic Usage:
 
@@ -208,6 +223,12 @@ class Slicer:
             False  # Default, is changed to true after suitable checks
         )
 
+        # Zarr arrays dont have a flip method, or support negative indices. However,
+        # after one indexing, they turn into numpy arrays which DO support negative
+        # indices. To keep no dependencies, we do not type check, however
+        # if it looks like a duck...
+        self.__probably_a_zarr_array = False
+
         # Check that all of the nasty inputs are handled...
         self._check_validity()
 
@@ -219,31 +240,40 @@ class Slicer:
 
         for i, size in enumerate(self.__crop_size):
             if (
-                not self.__crop_size[i]
-                < image_shape[i + len(image_shape) - len(self.__crop_size)]
+                    not self.__crop_size[i]
+                        < image_shape[i + len(image_shape) - len(self.__crop_size)]
             ):
                 self.__user_defined_crop_larger_than_image = True
 
             self.__crop_size[i] = (
                 self.__crop_size[i]
                 if self.__crop_size[i]
-                < image_shape[i + len(image_shape) - len(self.__crop_size)]
+                   < image_shape[i + len(image_shape) - len(self.__crop_size)]
                 else image_shape[i + len(image_shape) - len(self.__crop_size)]
             )
 
-        try:
+        # Here we check if we can pad the image with indexing. We require negative indexing support, an implement flip
+        # method, or it to be a zarr array
+
+        try:  # test for negative stride
             self.__image[0:1:-1, ...]  # can flip with negative indices
             self.__support_negative_strides = True
             self.__can_pad = pad
 
         except:
-            if not hasattr(self.__image, "flip"):
-
-                raise RuntimeError(
-                    "Your image array does not implement a flip method or support negative strides. Therefore, padding is not supported."
-                )
-            else:
+            try:
+                self.__image[0:1, ...][::-1, ...]
+                self.__probably_a_zarr_array = True
                 self.__can_pad = pad
+
+            except:
+                if not hasattr(self.__image, "flip"):
+
+                    raise RuntimeError(
+                        "Your image array does not implement a flip method or support negative strides. Therefore, padding is not supported."
+                    )
+                else:
+                    self.__can_pad = pad
 
     def _check_validity(self):
         """ simply checks the validity of all inputs """
@@ -319,7 +349,7 @@ class Slicer:
             )
 
     def __iter__(
-        self,
+            self,
     ) -> Generator[
         Tuple[
             TensorLike | Sequence[TensorLike],
@@ -333,12 +363,12 @@ class Slicer:
 
         output_cache = []
         for ind, xyz in self.__progress_bar(
-            _nd_generator(self.__crop_size, self.__overlap, image_shape, self.__can_pad)
+                _nd_generator(self.__crop_size, self.__overlap, image_shape, self.__can_pad)
         ):
 
             # _nd_generator returns a list of slices
-            source = self._source()
-            destination = self._destination(
+            source = self._get_source_index()
+            destination = self._get_destination_index(
                 tuple(a.start for a in ind if isinstance(a, slice)), image_shape
             )
             crop = self._index_image_with_pad(tuple(ind))
@@ -352,7 +382,7 @@ class Slicer:
             yield self._flush_output(output_cache)
 
     def _flush_output(
-        self, output_cache
+            self, output_cache
     ) -> Tuple[
         TensorLike | Sequence[TensorLike],
         Index | Sequence[Index],
@@ -371,8 +401,8 @@ class Slicer:
         destinations: List[Index] = [tuple(d) for t, s, d in output]
 
         if (
-            isinstance(images, list)
-            and len(images) == len(sources) == len(destinations) == 1
+                isinstance(images, list)
+                and len(images) == len(sources) == len(destinations) == 1
         ):
             return images[0], sources[0], destinations[0]
 
@@ -406,6 +436,22 @@ class Slicer:
             a = slice(a.start - delta, a.stop - delta, a.step)
 
         return slice(min(max(a.start, 0), m), min(max(a.stop, 0), m), a.step)
+
+    def _flip_array(self, array: TensorLike, index: int):
+        """ handes flipping a zarr array """
+        if self.__probably_a_zarr_array and self.__can_pad:
+            ind = []
+            for i, s in enumerate(array.shape):
+                if i == index:
+                    ind.append(slice(s, None, -1))
+                else:
+                    ind.append(slice(0, None, 1))
+
+            return array[tuple(ind)]
+        elif not self.__support_negative_strides:  # can flip...
+            return array.flip(index)
+        else:
+            RuntimeError('unknown error. cannot flip or not a zarr array')
 
     def _index_image_with_pad(self, index: Index) -> TensorLike:
         """
@@ -465,10 +511,13 @@ class Slicer:
             padding_destination: SliceList = [Ellipsis]
             other_destination: SliceList = [Ellipsis]
 
+            has_padded = False
+
             # Padding on the left
             if ind.start < 0:
+                has_padded = True
                 for d, (current_slice, c) in enumerate(
-                    zip(modified_index, self.__crop_size)
+                        zip(modified_index, self.__crop_size)
                 ):
                     x = c if first_access else shape[d + n_leading_dimensions]
                     if i + n_leading_dimensions != d:
@@ -486,22 +535,11 @@ class Slicer:
                         other_source.append(slice(0, ind.stop, 1))
                         other_destination.append(slice(abs(ind.start), None, 1))
 
-                to_access = output_array if first_access else self.__image
-
-                pad = deepcopy(to_access[tuple(padding_source)])
-                if not self.__support_negative_strides:
-                    pad = pad.flip(i + len(shape) - len(self.__crop_size))
-                other = deepcopy(to_access[tuple(other_source)])
-
-                if pad is not None:
-                    output_array[tuple(other_destination)] = other
-                    output_array[tuple(padding_destination)] = pad
-                    first_access = True
-
             # Padding on the right
             elif ind.stop > s:
+                has_padded = True
                 for d, (current_slice, c) in enumerate(
-                    zip(modified_index, self.__crop_size)
+                        zip(modified_index, self.__crop_size)
                 ):
                     x = c if first_access else shape[d + n_leading_dimensions]
                     if i + len(shape) - len(self.__crop_size) != d:
@@ -510,7 +548,6 @@ class Slicer:
                         padding_destination.append(slice(0, c, 1))
                         other_destination.append(slice(0, c, 1))
                     else:
-
                         padding_source.append(
                             slice(x, -(ind.stop - s) - 1, -1)
                             if self.__support_negative_strides
@@ -520,30 +557,29 @@ class Slicer:
                         padding_destination.append(slice(-(ind.stop - s), c, 1))
                         other_destination.append(slice(0, -(ind.stop - s), 1))
 
+            if has_padded:
                 to_access = output_array if first_access else self.__image
-
                 pad = deepcopy(to_access[tuple(padding_source)])
                 if not self.__support_negative_strides:
-                    pad = pad.flip(i + len(shape) - len(self.__crop_size))
+                    pad = self._flip_array(pad, i + len(shape) - len(self.__crop_size))
                 other = deepcopy(to_access[tuple(other_source)])
 
-                if pad is not None:
-                    output_array[tuple(other_destination)] = other
-                    output_array[tuple(padding_destination)] = pad
-                    first_access = True
+                output_array[tuple(other_destination)] = other
+                output_array[tuple(padding_destination)] = pad
+                first_access = True
 
         return output_array
 
-    def _source(self) -> Index:
+    def _get_source_index(self) -> Index:
         """ returns indices of the crop excluding overlap """
         source = [Ellipsis]
         for o, s in zip(self.__overlap, self.__crop_size):
             source += [slice(o, -o if o != 0 else s)]
         return tuple(source)
 
-    def _destination(self, xyz: Sequence[int], shape: Shape) -> Index:
+    def _get_destination_index(self, xyz: Sequence[int], shape: Shape) -> Index:
         """
-        returns the indicies to place the non-overlaping region of the image into a new tensor
+        returns the indicies necessary to place the non-overlaping region of the image into a new tensor
         """
         shape = list(shape)
         while len(shape) > len(self.__crop_size):

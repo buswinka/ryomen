@@ -147,6 +147,9 @@ for crop, source, destination in slices:
 ```
 
 ### Change Log
+
+
+
 #### 0.0.4
     - padding now works with pure indexing, for reflections. Tested up to 3D with numpy. 
 
