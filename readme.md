@@ -149,6 +149,10 @@ for crop, source, destination in slices:
 ### Change Log
 
 
+#### 0.0.5
+    - fixed bug with duplicate indices being shown, leading to redundant behaviro
+    - added support for zarr arrays, as they do not implement a flip method or support negative indexing
+    - refactored for readability
 
 #### 0.0.4
     - padding now works with pure indexing, for reflections. Tested up to 3D with numpy. 
