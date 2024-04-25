@@ -5,6 +5,7 @@
 .zed
 .idea
 build
+docs_build
 *.egg-info
 dist
 __pycache__

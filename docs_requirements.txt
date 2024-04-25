@@ -1,0 +1,15 @@
+Sphinx>=5.3.0
+sphinx-autodoc-typehints>=1.23.0
+sphinx-basic-ng>=1.0.0b1
+sphinx-copybutton>=0.5.2
+sphinx_design>=0.4.1
+sphinx_inline_tabs>=2023.4.21
+sphinxcontrib-applehelp>=1.0.4
+sphinxcontrib-devhelp>=1.0.2
+sphinxcontrib-htmlhelp>=2.0.1
+sphinxcontrib-jsmath>=1.0.1
+sphinxcontrib-qthelp>=1.0.3
+sphinxcontrib-serializinghtml>=1.1.5
+furo>=2023.3.27
+myst-nb>=0.17.2
+myst-parser>=0.18.1

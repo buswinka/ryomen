@@ -9,6 +9,7 @@ from typing import (
     Iterator,
     Generator,
     Union,
+    NewType
 )
 from copy import copy, deepcopy
 
@@ -18,7 +19,7 @@ SliceList = List[Union[type(Ellipsis), slice]]
 
 
 class TensorLike:
-    """ generic class for any tensor like object: zarr, numpy, pytorch, etc... """
+    """ Any array type that matches this signature will work with ryomen. Tested include: zarr, numpy, pytorch... """
 
     shape: Shape
 
@@ -26,12 +27,15 @@ class TensorLike:
         ...
 
     def __getitem__(self, item: Any) -> TensorLike:
+        """ Required Method """
         ...
 
     def __setitem__(self, index: Any, item: Any) -> TensorLike:
+        """ Required Method """
         ...
 
     def __iter__(self) -> Iterator:
+        """ Required Method"""
         ...
 
     def __next__(self) -> TensorLike:
@@ -41,9 +45,11 @@ class TensorLike:
         ...
 
     def size(self) -> Shape:
+        """ Required Method """
         ...
 
     def flip(self, dim: int) -> TensorLike:
+        """ not necessary if tensor supports negative strides """
         ...
 
 
@@ -128,7 +134,7 @@ class Slicer:
         :param crop_size: Tuple ints for cropping dimensions
         :param overlap: Tuple of ints for the overlap between crops
         :param batch_size: batch size of crops. Allows for returning multiple crops in one iteration
-        :param pad: pads the image by overlap if true. Only supported if input tensor implements a flip method.
+        :param pad: pads the image by reflection if true. Only supported if input tensor implements a flip method.
         :param output_transform: function to apply to each crop before returning
         :param collate: function to collate images, the default behavior is to return a list of crops
         :param progress_bar: function which wraps the iteration and displays a progress bar. (e.g. tqdm)
@@ -143,12 +149,11 @@ class Slicer:
         self.__collate_fn = collate
         self.__progress_bar = progress_bar
 
-        self.__can_pad = (
-            False  # Default, is changed to value of pad after suitable checks
-        )
-        self.__support_negative_strides = (
-            False  # Default, is changed to true after suitable checks
-        )
+        # Default, is changed to value of pad after suitable checks
+        self.__can_pad = False
+
+        # Default, is changed to true after suitable checks
+        self.__support_negative_strides = False
 
         # Zarr arrays don't have a flip method, or support negative indices. However,
         # after one indexing, they turn into numpy arrays which DO support negative
@@ -283,7 +288,6 @@ class Slicer:
                 "requested batch size is greater than the entirety of the image cropped. "
                 f"All crops collated would result in {n} batches. {n} < {self.__batch_size}"
             )
-
 
     def _get_source_index(self) -> Index:
         """
@@ -420,7 +424,6 @@ class Slicer:
 
         else:
             return images, sources, destinations
-
 
     @staticmethod
     def _minmax(a: slice, m: int) -> slice:
@@ -597,4 +600,3 @@ class Slicer:
 
         if len(output_cache) > 0:
             yield self._flush_output(output_cache)
-

@@ -149,6 +149,11 @@ for crop, source, destination in slices:
 
 ### Change Log
 
+#### 0.0.6
+    - fixed bug where leading dimensions break the slicer when padding is applied
+    - changed padding to be on by default
+    - refactored for code clarity
+
 
 #### 0.0.5
     - fixed bug with duplicate indices being shown, leading to redundant behaviro
