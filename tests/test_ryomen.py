@@ -1,5 +1,5 @@
 import pytest
-from ryomen.main import Slicer, _nd_generator
+from ryomen.main import Slicer
 import numpy as np
 import torch
 import zarr
@@ -97,7 +97,7 @@ def test_all_dim_zarr(N: int, leading_dims: int):
 def test_that_nd_gen_finishes():
     max = 10000
     counter = 0
-    for ind, xyz in _nd_generator(
+    for ind, xyz in Slicer._nd_generator(Slicer,
         crop=[10, 10, 10], overlap=[2, 2, 2], shape=(100, 100, 10), pad=False
     ):
         counter += 1
@@ -106,7 +106,7 @@ def test_that_nd_gen_finishes():
     # now do it with padding
     max = 10000
     counter = 0
-    for ind, xyz in _nd_generator(
+    for ind, xyz in Slicer._nd_generator(Slicer,
         crop=[10, 10, 10], overlap=[2, 2, 2], shape=(100, 100, 10), pad=True
     ):
         counter += 1
@@ -124,7 +124,7 @@ def test_non_array_input():
 
 def test_total_3d_ind_coverage():
     image = np.zeros((100, 100, 10))
-    for ind, xyz in _nd_generator(
+    for ind, xyz in Slicer._nd_generator(Slicer,
         crop=[10, 10, 10], overlap=[2, 2, 2], shape=image.shape, pad=False
     ):
         image[tuple(ind)] = 1
@@ -134,7 +134,7 @@ def test_total_3d_ind_coverage():
 def test_total_2d_ind_coverage():
 
     image = np.zeros((100, 100))
-    for ind, xyz in _nd_generator(
+    for ind, xyz in Slicer._nd_generator(Slicer,
         crop=[30, 30], overlap=[10, 10], shape=image.shape, pad=False
     ):
         image[tuple(ind)] = 1
@@ -144,7 +144,7 @@ def test_total_2d_ind_coverage():
 def test_total_5d_ind_coverage():
 
     image = np.zeros((30, 30, 30, 30, 30))
-    for ind, xyz in _nd_generator(
+    for ind, xyz in Slicer._nd_generator(Slicer,
         crop=[10, 10, 10, 10, 10], overlap=[2,] * 5, shape=image.shape, pad=False
     ):
         image[tuple(ind)] = 1
