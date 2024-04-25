@@ -10,7 +10,7 @@ Ryomen is a lightweight, no dependency utility for working with large biological
 Modern microscopes can image cells, tissue, or whatever else, over huge spatial areas, resulting in images that can be
 quite large (hundreds of gigabytes). This can make applying image processing or deep learning algorithms difficult. 
 Ryomen makes this easy by automatically slicing up large images and providing an easy-to-use interface for working with the
-crops. 
+crops. Ryomen is powerful when paired with 
 
 ### What can it do? 
 

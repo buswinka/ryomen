@@ -138,7 +138,7 @@ class Slicer:
             crop_size: Sequence[int],
             overlap: Sequence[int],
             batch_size: int = 1,
-            pad: bool = False,
+            pad: bool = True,
             output_transform: Callable[[TensorLike], TensorLike] = lambda x: x,
             collate: Callable[
                 [Sequence[TensorLike]], TensorLike | Sequence[TensorLike]
