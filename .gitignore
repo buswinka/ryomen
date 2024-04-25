@@ -9,3 +9,4 @@ docs_build
 *.egg-info
 dist
 __pycache__
+/tests/playground.py
