@@ -506,7 +506,7 @@ class Slicer:
 
         # axis is smaller (-1) or larger than size
         shape = copy(list(self.__image.shape))
-        while len(shape) < len(self.__crop_size):
+        while len(shape) > len(self.__crop_size):
             shape.pop(0)  # remove leading dim
 
         # Remove all Ellipsis. There should only be one at position 0, however this
@@ -602,9 +602,13 @@ class Slicer:
                 if not self.__support_negative_strides:
                     pad = self._flip_array(pad, i + len(shape) - len(self.__crop_size))
                 other = deepcopy(to_access[tuple(other_source)])
+                try:
+                    output_array[tuple(other_destination)] = other
+                    output_array[tuple(padding_destination)] = pad
+                except:
+                    pass
+                    raise RuntimeError
 
-                output_array[tuple(other_destination)] = other
-                output_array[tuple(padding_destination)] = pad
                 first_access = True
 
         return output_array
