@@ -148,6 +148,7 @@ class Slicer:
         self.__output_fn = output_transform
         self.__collate_fn = collate
         self.__progress_bar = progress_bar
+        self.__crop_cache = None
 
         # Default, is changed to value of pad after suitable checks
         self.__can_pad = False
@@ -370,7 +371,7 @@ class Slicer:
 
         # We cache all previous indices here, as the cost of looking this up
         # is presumably less than the cost of re-running the expensive fn
-        previously_yeilded = []
+        previously_yielded = set()
 
         # copy because lists are mutable -- we need to mutate it in this scope but not the higher one...
         shape = copy(list(shape))
@@ -382,19 +383,19 @@ class Slicer:
 
         ind, x = self._get_next_slice(x, crop, overlap, shape, pad)
         while not all((a + c) > b + (o * pad) for a, b, c, o in zip(x, shape, crop, overlap)):
-            if str(ind) not in previously_yeilded:
-                previously_yeilded.append(str(ind))
+            if str(ind) not in previously_yielded:
+                previously_yielded.add(str(ind))
                 yield ind, x
 
             ind, x = self._get_next_slice(x, crop, overlap, shape, pad)
 
-        if str(ind) not in previously_yeilded:
-            previously_yeilded.append(str(ind))
+        if str(ind) not in previously_yielded:
+            previously_yielded.add(str(ind))
             yield ind, x
 
         ind, x = self._get_next_slice(x, crop, overlap, shape, pad)
-        if str(ind) not in previously_yeilded:
-            previously_yeilded.append(str(ind))
+        if str(ind) not in previously_yielded:
+            previously_yielded.add(str(ind))
             yield ind, x
 
     def _flush_output(
@@ -486,14 +487,19 @@ class Slicer:
 
         # We have a problem! We need a library agnostic way to create a tensor
         # We can do this by indexing another part of the tensor, and doing a deepcopy.
-        _output_index, _ = self._get_next_slice(
-            [0 for _ in self.__crop_size],
-            c=self.__crop_size,
-            o=self.__overlap,
-            shape=shape,
-            pad=False,
-        )
-        output_array = self.__image[_output_index] * 0  # zeros the array
+        if self.__crop_cache is None:
+            _output_index, _ = self._get_next_slice(
+                [0 for _ in self.__crop_size],
+                c=self.__crop_size,
+                o=self.__overlap,
+                shape=shape,
+                pad=False,
+            )
+            output_array = self.__image[_output_index] * 0  # zeros the array
+            self.__crop_cache = output_array
+        else:
+            output_array = self.__crop_cache
+
         first_access = False
 
         n_leading_dimensions = len(shape) - len(self.__crop_size)
