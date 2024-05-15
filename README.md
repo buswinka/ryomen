@@ -149,6 +149,12 @@ for crop, source, destination in slices:
 
 ### Change Log
 
+#### 0.0.8
+    - bugfix where entire array was being deepcopied, leading to poor performance on large tensors.
+
+#### 0.0.7
+    - small performance inprovements
+
 #### 0.0.6
     - fixed bug where leading dimensions break the slicer when padding is applied
     - changed padding to be on by default

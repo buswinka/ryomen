@@ -12,6 +12,7 @@ from typing import (
     NewType
 )
 from copy import copy, deepcopy
+from functools import cache
 
 Shape = Sequence[int]
 Index = Tuple[Union[type(Ellipsis), slice], ...]
@@ -149,6 +150,9 @@ class Slicer:
         self.__collate_fn = collate
         self.__progress_bar = progress_bar
         self.__crop_cache = None
+
+        if self.__batch_size > 1:
+            raise RuntimeError('batch size of 1 gives errors in skoots')
 
         # Default, is changed to value of pad after suitable checks
         self.__can_pad = False
@@ -451,6 +455,18 @@ class Slicer:
         elif not self.__support_negative_strides:  # can flip...
             return array.flip(index)
 
+    def _tensor_agnostic_deepcopy(self, x):
+        """ for performance reasons, we should check for each array type's copy method """
+        try:
+            x = x.clone()  # pytorch
+        except AttributeError:
+            try:
+                x = x.copy()  # numpy()
+            except AttributeError:
+                x = deepcopy(x)  # universal fallback
+
+        return x
+
     def _index_image_with_pad(self, index: Index) -> TensorLike:
         """
         Terrible function to index the image, and through indexing alone, pads the image with reflections. It
@@ -500,7 +516,7 @@ class Slicer:
         else:
             output_array = self.__crop_cache
 
-        first_access = False
+        already_accessed = False
 
         n_leading_dimensions = len(shape) - len(self.__crop_size)
         for i, (ind, s, o) in enumerate(zip(modified_index, shape, self.__overlap)):
@@ -514,10 +530,10 @@ class Slicer:
             for d, (current_slice, c) in enumerate(
                     zip(modified_index, self.__crop_size)
             ):
-                x = c if first_access else shape[d + n_leading_dimensions]
+                x = c if already_accessed else shape[d + n_leading_dimensions]
                 if i + n_leading_dimensions != d:  # Dimension where padding is not required
-                    padding_source.append(self._minmax(current_slice, c if first_access else x))
-                    other_source.append(self._minmax(current_slice, c if first_access else x))
+                    padding_source.append(self._minmax(current_slice, c if already_accessed else x))
+                    other_source.append(self._minmax(current_slice, c if already_accessed else x))
                     padding_destination.append(slice(0, c, 1))
                     other_destination.append(slice(0, c, 1))
 
@@ -539,22 +555,27 @@ class Slicer:
                         if self.__support_negative_strides
                         else slice(-(ind.stop - s), x, 1)
                     )
-                    other_source.append(slice(ind.stop - s if first_access else current_slice.start, x))
+                    other_source.append(slice(ind.stop - s if already_accessed else current_slice.start, x))
                     padding_destination.append(slice(-(ind.stop - s), c, 1))
                     other_destination.append(slice(0, -(ind.stop - s), 1))
 
             if has_padded:
-                to_access = output_array if first_access else self.__image
-                pad = deepcopy(to_access[tuple(padding_source)])
+                to_access = output_array if already_accessed else self.__image
+
+                # cant make this a one-liner lest the entire array be deepcopied
+                pad = to_access[tuple(padding_source)]
+                pad = self._tensor_agnostic_deepcopy(pad)
 
                 if not self.__support_negative_strides:
                     pad = self._flip_array(pad, i + len(shape) - len(self.__crop_size))
 
-                other = deepcopy(to_access[tuple(other_source)])
+                other = to_access[tuple(other_source)]
+                other = self._tensor_agnostic_deepcopy(other)
+
                 output_array[tuple(other_destination)] = other
                 output_array[tuple(padding_destination)] = pad
 
-                first_access = True
+                already_accessed = True
 
         return output_array
 
